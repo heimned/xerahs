@@ -21,12 +21,26 @@ permissions:
   contents: read
 
 jobs:
+  build-and-test:
+    # Same commands as native-recording.yml: full solution build with warnings as errors,
+    # then the whole XerahS.Tests suite (AGENTS.md: the solution build must pass).
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - run: git submodule update --init ShareX.ImageEditor Omacut
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet build src/desktop/XerahS.sln -c Release -m:1 -p:UseSharedCompilation=false
+      - run: dotnet test tests/XerahS.Tests/XerahS.Tests.csproj -c Release --no-build --logger "console;verbosity=minimal"
+
   measure-windows:
     runs-on: windows-2022
     timeout-minutes: 120
     env:
       BASE_REF: ${{ inputs.base_ref || 'd3f0016e0979a42bb95a7247fe330500d2001c30' }}
-      RUNS: ${{ inputs.runs || '5' }}
+      RUNS: ${{ inputs.runs || '3' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -46,11 +60,6 @@ jobs:
           dotnet restore ShareX.ImageEditor/src/ShareX.ImageEditor/ShareX.ImageEditor.csproj -p:OS=Windows_NT @flags; if ($LASTEXITCODE) { exit 1 }
           dotnet restore src/desktop/app/XerahS.UI/XerahS.UI.csproj -p:OS=Windows_NT @flags; if ($LASTEXITCODE) { exit 1 }
           dotnet publish src/desktop/app/XerahS.App -c Release -p:OS=Windows_NT -r win-x64 --self-contained true -p:PublishSingleFile=false -p:SkipBundlePlugins=true -o out/after @flags; if ($LASTEXITCODE) { exit 1 }
-
-      - name: Unit tests (after)
-        shell: pwsh
-        continue-on-error: true
-        run: dotnet test tests/XerahS.Tests/XerahS.Tests.csproj -c Release -p:OS=Windows_NT --disable-build-servers /m:1 --logger "trx;LogFileName=after.trx" --results-directory out/test-results
 
       - name: Publish base commit (before)
         shell: pwsh
@@ -73,6 +82,24 @@ jobs:
               & $script -AppDir "out/$label" -Label $label -Runs 1 -CheckpointsSec 5,30,120 `
                 -SeedSilentRun -ShowMainWindowScreenshotDir out/screenshots -Csv out/perf-results.csv
             }
+          }
+
+      - name: Print per-run rows and run-1 screenshots
+        if: always()
+        shell: pwsh
+        run: |
+          Import-Csv out/perf-results.csv | Select-Object Label, StartupMs, PrivateMB_5s, PrivateMB_30s, PrivateMB_120s, WorkingSetMB_120s, PrivateMB_AfterShow, WorkingSetMB_AfterShow | Format-Table -AutoSize | Out-String -Width 300
+          Add-Type -AssemblyName System.Drawing
+          foreach ($f in Get-ChildItem out/screenshots -Filter '*-run1.png') {
+            $src = [System.Drawing.Image]::FromFile($f.FullName)
+            $w = 800; $h = [int]($src.Height * $w / $src.Width)
+            $bmp = [System.Drawing.Bitmap]::new($src, $w, $h)
+            $ms = [IO.MemoryStream]::new()
+            $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+            "SCREENSHOT-BEGIN $($f.Name)"
+            [Convert]::ToBase64String($ms.ToArray())
+            "SCREENSHOT-END"
+            $bmp.Dispose(); $src.Dispose()
           }
 
       - name: Summary
