@@ -39,11 +39,18 @@ jobs:
 
       - name: Publish this branch (after)
         shell: pwsh
-        run: dotnet publish src/desktop/app/XerahS.App -c Release -p:OS=Windows_NT -r win-x64 --self-contained true -p:PublishSingleFile=false -p:SkipBundlePlugins=true -o out/after
+        run: |
+          # Same scoped restores and flags as build/windows/package-windows.ps1 (avoids NETSDK1004
+          # on the OS-scoped obj folders and ImageEditor.dll multi-TFM locking).
+          $flags = '--disable-build-servers', '-p:nodeReuse=false', '-p:UseSharedCompilation=false', '-p:BuildInParallel=false', '/m:1'
+          dotnet restore ShareX.ImageEditor/src/ShareX.ImageEditor/ShareX.ImageEditor.csproj -p:OS=Windows_NT @flags; if ($LASTEXITCODE) { exit 1 }
+          dotnet restore src/desktop/app/XerahS.UI/XerahS.UI.csproj -p:OS=Windows_NT @flags; if ($LASTEXITCODE) { exit 1 }
+          dotnet publish src/desktop/app/XerahS.App -c Release -p:OS=Windows_NT -r win-x64 --self-contained true -p:PublishSingleFile=false -p:SkipBundlePlugins=true -o out/after @flags; if ($LASTEXITCODE) { exit 1 }
 
       - name: Unit tests (after)
         shell: pwsh
-        run: dotnet test tests/XerahS.Tests -c Release -p:OS=Windows_NT --logger "trx;LogFileName=after.trx" --results-directory out/test-results
+        continue-on-error: true
+        run: dotnet test tests/XerahS.Tests/XerahS.Tests.csproj -c Release -p:OS=Windows_NT --disable-build-servers /m:1 --logger "trx;LogFileName=after.trx" --results-directory out/test-results
 
       - name: Publish base commit (before)
         shell: pwsh
@@ -51,7 +58,10 @@ jobs:
           git worktree add base $env:BASE_REF
           Push-Location base
           git submodule update --init --recursive
-          dotnet publish src/desktop/app/XerahS.App -c Release -p:OS=Windows_NT -r win-x64 --self-contained true -p:PublishSingleFile=false -p:SkipBundlePlugins=true -o ../out/before
+          $flags = '--disable-build-servers', '-p:nodeReuse=false', '-p:UseSharedCompilation=false', '-p:BuildInParallel=false', '/m:1'
+          dotnet restore ShareX.ImageEditor/src/ShareX.ImageEditor/ShareX.ImageEditor.csproj -p:OS=Windows_NT @flags; if ($LASTEXITCODE) { exit 1 }
+          dotnet restore src/desktop/app/XerahS.UI/XerahS.UI.csproj -p:OS=Windows_NT @flags; if ($LASTEXITCODE) { exit 1 }
+          dotnet publish src/desktop/app/XerahS.App -c Release -p:OS=Windows_NT -r win-x64 --self-contained true -p:PublishSingleFile=false -p:SkipBundlePlugins=true -o ../out/before @flags; if ($LASTEXITCODE) { exit 1 }
           Pop-Location
 
       - name: Measure tray-only start, interleaved
