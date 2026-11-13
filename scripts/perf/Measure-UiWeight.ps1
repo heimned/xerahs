@@ -120,6 +120,12 @@ for ($run = 1; $run -le $Runs; $run++) {
         $s = Get-Sample $proc
         $row.PrivateMB_AfterShow = $s.PrivateMB
         $row.WorkingSetMB_AfterShow = $s.WorkingSetMB
+        # Settled value: the main window stays open, so IdleMemoryTrimmer will not run; this shows
+        # whether the extra memory right after first open is garbage the GC reclaims or a real cost.
+        Start-Sleep -Seconds 100
+        $s = Get-Sample $proc
+        $row.PrivateMB_AfterShow120s = $s.PrivateMB
+        $row.WorkingSetMB_AfterShow120s = $s.WorkingSetMB
         if ($IsWindows) {
             New-Item $ShowMainWindowScreenshotDir -ItemType Directory -Force | Out-Null
             Add-Type -AssemblyName System.Windows.Forms, System.Drawing
