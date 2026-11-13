@@ -126,6 +126,13 @@ for ($run = 1; $run -le $Runs; $run++) {
         $s = Get-Sample $proc
         $row.PrivateMB_AfterShow120s = $s.PrivateMB
         $row.WorkingSetMB_AfterShow120s = $s.WorkingSetMB
+        # Close the window (WM_CLOSE). With SilentRun this hides it to the tray, after which
+        # IdleMemoryTrimmer may run again; shows whether the after-open memory is given back.
+        $proc.Refresh(); [void]$proc.CloseMainWindow()
+        Start-Sleep -Seconds 60
+        $s = Get-Sample $proc
+        $row.PrivateMB_AfterHide60s = $s.PrivateMB
+        $row.WorkingSetMB_AfterHide60s = $s.WorkingSetMB
         if ($IsWindows) {
             New-Item $ShowMainWindowScreenshotDir -ItemType Directory -Force | Out-Null
             Add-Type -AssemblyName System.Windows.Forms, System.Drawing
