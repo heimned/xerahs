@@ -97,7 +97,8 @@ jobs:
             $ms = [IO.MemoryStream]::new()
             $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Jpeg)
             "SCREENSHOT-BEGIN $($f.Name)"
-            [Convert]::ToBase64String($ms.ToArray())
+            $b64 = [Convert]::ToBase64String($ms.ToArray())
+            for ($i = 0; $i -lt $b64.Length; $i += 4000) { $b64.Substring($i, [Math]::Min(4000, $b64.Length - $i)) }
             "SCREENSHOT-END"
             $bmp.Dispose(); $src.Dispose()
           }
