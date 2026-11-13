@@ -1,0 +1,106 @@
+name: XIP0091 UI weight (before vs after)
+
+# Builds the base commit and this branch, then measures a tray-only (SilentRun) start of each,
+# interleaving runs so machine drift hits both builds equally. Also runs the unit tests on this
+# branch and opens the main window once per run to prove it still shows the editor.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Commit or branch to compare against
+        default: d3f0016e0979a42bb95a7247fe330500d2001c30
+      runs:
+        description: Runs per build
+        default: "5"
+  push:
+    branches:
+      - xip0091-lightweight-tray-ui
+
+permissions:
+  contents: read
+
+jobs:
+  measure-windows:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      BASE_REF: ${{ inputs.base_ref || 'd3f0016e0979a42bb95a7247fe330500d2001c30' }}
+      RUNS: ${{ inputs.runs || '5' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish this branch (after)
+        shell: pwsh
+        run: dotnet publish src/desktop/app/XerahS.App -c Release -p:OS=Windows_NT -r win-x64 --self-contained true -p:PublishSingleFile=false -p:SkipBundlePlugins=true -o out/after
+
+      - name: Unit tests (after)
+        shell: pwsh
+        run: dotnet test tests/XerahS.Tests -c Release -p:OS=Windows_NT --logger "trx;LogFileName=after.trx" --results-directory out/test-results
+
+      - name: Publish base commit (before)
+        shell: pwsh
+        run: |
+          git worktree add base $env:BASE_REF
+          Push-Location base
+          git submodule update --init --recursive
+          dotnet publish src/desktop/app/XerahS.App -c Release -p:OS=Windows_NT -r win-x64 --self-contained true -p:PublishSingleFile=false -p:SkipBundlePlugins=true -o ../out/before
+          Pop-Location
+
+      - name: Measure tray-only start, interleaved
+        shell: pwsh
+        run: |
+          $script = 'scripts/perf/Measure-UiWeight.ps1'
+          for ($i = 1; $i -le [int]$env:RUNS; $i++) {
+            foreach ($label in 'before', 'after') {
+              & $script -AppDir "out/$label" -Label $label -Runs 1 -CheckpointsSec 5,30,120 `
+                -SeedSilentRun -ShowMainWindowScreenshotDir out/screenshots -Csv out/perf-results.csv
+            }
+          }
+
+      - name: Summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (-not (Test-Path out/perf-results.csv)) { "No measurements were recorded." >> $env:GITHUB_STEP_SUMMARY; exit 0 }
+          $table = & scripts/perf/Measure-UiWeight.ps1 -Compare -Csv out/perf-results.csv
+          $cols = 'Label','Runs','StartupMs','AsyncInitMs','PrivateMB_5s','PrivateMB_30s','PrivateMB_120s','PrivateMB_AfterShow'
+          "## XIP0091 tray-only start: medians (Windows, base $env:BASE_REF)" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          "| $($cols -join ' | ') |" >> $env:GITHUB_STEP_SUMMARY
+          "|$((@('---') * $cols.Count) -join '|')|" >> $env:GITHUB_STEP_SUMMARY
+          foreach ($r in $table) { "| $(($cols | ForEach-Object { $r.$_ }) -join ' | ') |" >> $env:GITHUB_STEP_SUMMARY }
+          "" >> $env:GITHUB_STEP_SUMMARY
+          "Raw per-run rows (check the spread before trusting a difference):" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          '```' >> $env:GITHUB_STEP_SUMMARY
+          Import-Csv out/perf-results.csv | Select-Object Label, Run, StartupMs, PrivateMB_5s, PrivateMB_30s, PrivateMB_120s, PrivateMB_AfterShow | Format-Table -AutoSize | Out-String >> $env:GITHUB_STEP_SUMMARY
+          '```' >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Collect logs
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item out/logs -ItemType Directory -Force | Out-Null
+          foreach ($label in 'before', 'after') {
+            $dir = Join-Path ([IO.Path]::GetTempPath()) "xerahs-perf-$label"
+            New-Item "out/logs/$label" -ItemType Directory -Force | Out-Null
+            if (Test-Path $dir) { Get-ChildItem $dir -Directory -Filter 'logs-*' | ForEach-Object { Copy-Item $_.FullName "out/logs/$label/$($_.Name)" -Recurse -Force } }
+          }
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: xip0091-ui-weight
+          path: |
+            out/perf-results.csv
+            out/screenshots
+            out/logs
+            out/test-results
